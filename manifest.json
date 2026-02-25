@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Shortmoji — Emoji Shortcodes",
+  "version": "1.0.0",
+  "description": "The colon is mightier than the mouse. Type :emoji: shortcodes anywhere — no picker, no hunting, no nonsense.",
+  "permissions": ["storage"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["emoji-data.js", "content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded square background -->
+  <rect x="0" y="0" width="128" height="128" rx="28" ry="28" fill="url(#bg)"/>
+
+  <!-- Speech bubble body -->
+  <rect x="20" y="22" width="88" height="68" rx="16" ry="16" fill="white"/>
+
+  <!-- Speech bubble tail -->
+  <polygon points="36,90 52,90 40,108" fill="white"/>
+
+  <!-- Left eye (colon) - top dot -->
+  <circle cx="44" cy="47" r="5.5" fill="#6366F1"/>
+
+  <!-- Left eye (colon) - bottom dot -->
+  <circle cx="44" cy="67" r="5.5" fill="#6366F1"/>
+
+  <!-- Smile arc (parenthesis) -->
+  <path d="M58,42 C78,42 82,57 82,57 C82,57 78,72 58,72"
+        fill="none" stroke="#6366F1" stroke-width="7" stroke-linecap="round"/>
+</svg>
