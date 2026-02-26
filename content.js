@@ -58,7 +58,14 @@
     items.forEach((item, i) => {
       const row = document.createElement('div');
       row.className = 'shortmoji-item' + (i === selectedIndex ? ' selected' : '');
-      row.innerHTML = `<span class="emoji">${item.emoji}</span><span class="shortcode">:${item.shortcode}:</span>`;
+      const emojiSpan = document.createElement('span');
+      emojiSpan.className = 'emoji';
+      emojiSpan.textContent = item.emoji;
+      const codeSpan = document.createElement('span');
+      codeSpan.className = 'shortcode';
+      codeSpan.textContent = `:${item.shortcode}:`;
+      row.appendChild(emojiSpan);
+      row.appendChild(codeSpan);
       row.addEventListener('mousedown', (e) => { e.preventDefault(); selectItem(i); });
       dropdown.appendChild(row);
     });
