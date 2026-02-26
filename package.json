@@ -1,6 +1,6 @@
 {
   "name": "shortmoji",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "scripts": {
     "build": "bun run build:chrome && bun run build:firefox",
