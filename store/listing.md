@@ -8,28 +8,28 @@ The colon is mightier than the mouse. Type :emoji: shortcodes anywhere — no pi
 
 ## Description
 
-**The colon is mightier than the mouse.**
+The colon is mightier than the mouse.
 
 Stop hunting through emoji pickers. Just type :smile: and get 😄. Anywhere on the web.
 
-**How it works:**
+How it works:
 • Type : or # followed by an emoji name (e.g. :rocket: or #rocket)
 • A dropdown shows matching emoji — pick with arrow keys + Enter
 • Or type the full shortcode :rocket: for instant replacement
-• Works in text inputs, Gmail, Notion, Slack web, and any contenteditable field
+• Works in text inputs, textareas and rich text editors
 
-**1870+ emoji shortcodes** — the same ones you already know from Slack, GitHub, and Discord.
+1870+ emoji shortcodes — the same ones you already know from Slack, GitHub, and Discord.
 
-**Features:**
+Features:
 • Instant replace — type :fire: and it becomes 🔥 immediately
 • Two triggers — :fire (Slack-style) or #fire (quick pound key)
 • Autocomplete dropdown with keyboard navigation
 • Toggle auto-replace on/off
 • Toggle the whole extension on/off
-• Works everywhere — textarea, input, contenteditable
+• Works in textareas, inputs and rich text editors, including popups and iframes
 • Zero dependencies — pure vanilla JS
 
-**What this extension does NOT do:**
+What this extension does NOT do:
 • Track you
 • Collect data
 • Phone home
@@ -40,6 +40,10 @@ Stop hunting through emoji pickers. Just type :smile: and get 😄. Anywhere on 
 Free. Open source. MIT licensed.
 
 Made by Sven Meys — https://github.com/svenmeys
+
+## What's new in 1.2.0 (paste into the release notes field)
+
+Fixes the dropdown landing off-screen or behind dialogs while still taking Enter. Code like x[a:b: and emoticons like :-p no longer turn into emoji, and Shift+Enter, Cmd+Enter and #1234 work as they should. Now works in Slate, CKEditor, Trix and TinyMCE.
 
 ## Category
 Productivity
