@@ -1,273 +1,346 @@
 (() => {
   'use strict';
 
-  let dropdown = null;
-  let selectedIndex = 0;
-  let matches = [];
   let enabled = true;
   let autoReplace = true;
+
+  let dropdown = null;
+  let open = false;
+  let matches = [];
+  let selectedIndex = 0;
   let activeEl = null;
   let triggerStart = -1;
+  let anchor = null;    // { x, top, bottom } of the trigger, measured once per trigger
+  let anchorFor = null; // the element and offset that anchor belongs to
+  let dismissed = null; // the trigger Escape closed: { el, start }
 
-  // Sync settings
   chrome.storage.sync.get({ enabled: true, autoReplace: true }, (d) => {
     enabled = d.enabled;
     autoReplace = d.autoReplace;
   });
   chrome.storage.onChanged.addListener((c) => {
-    if (c.enabled) enabled = c.enabled.newValue;
+    if (c.enabled) {
+      enabled = c.enabled.newValue;
+      if (!enabled) hideDropdown();
+    }
     if (c.autoReplace) autoReplace = c.autoReplace.newValue;
   });
 
-  // --- Trigger detection (shared between textarea + contenteditable) ---
+  const isTextField = (el) => el.tagName === 'TEXTAREA' || el.tagName === 'INPUT';
 
-  function findTrigger(before) {
-    // 1. Instant replacement: :shortcode: (colon-only, full match, if enabled)
-    if (autoReplace) {
-      const instant = before.match(/:([a-z0-9_+\-]+):$/);
-      if (instant && EMOJI_DATA[instant[1]]) {
-        return { mode: 'instant', start: before.length - instant[0].length, emoji: EMOJI_DATA[instant[1]] };
-      }
-    }
+  // Email fields stay out: they report selectionStart as null, so nothing can be replaced in them.
+  function isEditable(el) {
+    if (!el || !el.tagName) return false;
+    if (el.tagName === 'TEXTAREA') return true;
+    if (el.tagName === 'INPUT') return /^(|text|search|url)$/.test(el.type);
+    return el.isContentEditable || el.ownerDocument.designMode === 'on'; // Firefox says false in designMode
+  }
 
-    // 2. Autocomplete: :query or #query (2+ chars, preceded by whitespace or start)
-    const trigger = before.match(/[:#]([a-z0-9_+\-]{2,})$/);
-    if (!trigger) return null;
+  // pa-lean: Android keyboards type everything as one composition, so composition cannot mean "leave it alone" there.
+  // Not tested on a device. Upgrade path: a real Firefox for Android run.
+  const ANDROID = /Android/.test(navigator.userAgent);
+  const isComposing = (e) => e.isComposing && !ANDROID;
 
-    const pos = before.length - trigger[0].length;
-    if (pos > 0 && !/\s/.test(before[pos - 1])) return null;
+  // --- Selection, including inside shadow roots ---
 
-    const results = searchEmojis(trigger[1]);
-    if (!results.length) return null;
+  // Chrome hides shadow content from document.getSelection, and only offers it on the root.
+  function selectionFor(el) {
+    const root = el.getRootNode();
+    return root.getSelection ? root.getSelection() : document.getSelection();
+  }
 
-    return { mode: 'autocomplete', start: pos, results };
+  function caretTextNode(el) {
+    const sel = selectionFor(el);
+    if (!sel || !sel.rangeCount) return null;
+    const { startContainer: node, startOffset: offset } = sel.getRangeAt(0);
+    if (node.nodeType === Node.TEXT_NODE) return { node, offset };
+    // Some editors park the caret on an element, after the text it follows.
+    let last = node.childNodes[offset - 1];
+    while (last && last.nodeType !== Node.TEXT_NODE) last = last.lastChild;
+    return last ? { node: last, offset: last.length } : null;
   }
 
   // --- Dropdown ---
 
-  function ensureDropdown() {
-    if (dropdown) return;
-    dropdown = document.createElement('div');
-    dropdown.id = 'shortmoji-dropdown';
-    document.documentElement.appendChild(dropdown);
-  }
-
-  function showDropdown(x, y, items) {
-    ensureDropdown();
-    dropdown.innerHTML = '';
-    items.forEach((item, i) => {
+  function renderDropdown() {
+    if (!dropdown) {
+      dropdown = document.createElement('div');
+      dropdown.id = 'shortmoji-dropdown';
+      dropdown.setAttribute('role', 'listbox');
+      dropdown.setAttribute('aria-label', 'Emoji');
+      document.documentElement.appendChild(dropdown);
+    }
+    dropdown.replaceChildren(...matches.map((item, i) => {
       const row = document.createElement('div');
       row.className = 'shortmoji-item' + (i === selectedIndex ? ' selected' : '');
-      const emojiSpan = document.createElement('span');
-      emojiSpan.className = 'emoji';
-      emojiSpan.textContent = item.emoji;
-      const codeSpan = document.createElement('span');
-      codeSpan.className = 'shortcode';
-      codeSpan.textContent = `:${item.shortcode}:`;
-      row.appendChild(emojiSpan);
-      row.appendChild(codeSpan);
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', String(i === selectedIndex));
+      const emoji = document.createElement('span');
+      emoji.className = 'emoji';
+      emoji.textContent = item.emoji;
+      const code = document.createElement('span');
+      code.className = 'shortcode';
+      code.textContent = `:${item.shortcode}:`;
+      row.append(emoji, code);
       row.addEventListener('mousedown', (e) => { e.preventDefault(); selectItem(i); });
-      dropdown.appendChild(row);
-    });
+      // mousemove, not hover: a pointer that happens to rest under the list must not look like a choice.
+      row.addEventListener('mousemove', () => {
+        if (selectedIndex !== i) { selectedIndex = i; updateSelection(); }
+      });
+      return row;
+    }));
+  }
 
-    const vw = window.innerWidth, vh = window.innerHeight;
+  function placeDropdown() {
     dropdown.classList.add('visible');
-    const dw = dropdown.offsetWidth, dh = dropdown.offsetHeight;
-    dropdown.style.left = Math.min(x, vw - dw - 8) + 'px';
-    dropdown.style.top = (y + dh > vh ? y - dh - 4 : y + 4) + 'px';
+    dropdown.style.maxHeight = '';
+    const width = dropdown.offsetWidth, height = dropdown.offsetHeight;
+    dropdown.style.left = Math.max(8, Math.min(anchor.x, window.innerWidth - width - 8)) + 'px';
+    // Never over the line being typed: take the roomier side and scroll inside it if the list does not fit.
+    const below = window.innerHeight - anchor.bottom - 12, above = anchor.top - 12;
+    const useBelow = height <= below || below >= above;
+    const shown = Math.min(height, useBelow ? below : above);
+    if (shown < height) dropdown.style.maxHeight = shown + 'px';
+    dropdown.style.top = (useBelow ? anchor.bottom + 4 : anchor.top - shown - 4) + 'px';
+  }
+
+  // Measuring a long textarea takes tens of milliseconds, so it happens once per trigger, not per keystroke.
+  function showDropdown(el, node, start, offset) {
+    const key = node || el;
+    if (!anchorFor || anchorFor.key !== key || anchorFor.start !== start) {
+      anchor = measureAnchor(el, node, start, offset);
+      anchorFor = { key, start };
+    }
+    if (!anchor) { hideDropdown(); return; }
+    renderDropdown();
+    placeDropdown();
+    if (!open) {
+      open = true;
+      window.addEventListener('scroll', remeasure, { capture: true, passive: true });
+      window.addEventListener('resize', remeasure);
+      window.addEventListener('focusout', hideDropdown, true);
+    }
   }
 
   function hideDropdown() {
-    if (dropdown) { dropdown.classList.remove('visible'); dropdown.innerHTML = ''; }
+    if (open) {
+      open = false;
+      dropdown.classList.remove('visible');
+      dropdown.replaceChildren();
+      window.removeEventListener('scroll', remeasure, { capture: true });
+      window.removeEventListener('resize', remeasure);
+      window.removeEventListener('focusout', hideDropdown, true);
+    }
     matches = [];
     selectedIndex = 0;
     activeEl = null;
     triggerStart = -1;
+    anchorFor = null;
   }
 
   function updateSelection() {
-    if (!dropdown) return;
     const items = dropdown.querySelectorAll('.shortmoji-item');
-    items.forEach((el, i) => el.classList.toggle('selected', i === selectedIndex));
+    items.forEach((el, i) => {
+      el.classList.toggle('selected', i === selectedIndex);
+      el.setAttribute('aria-selected', String(i === selectedIndex));
+    });
     items[selectedIndex]?.scrollIntoView({ block: 'nearest' });
   }
 
-  // --- Caret position ---
+  let remeasureQueued = false;
+  function remeasure() {
+    if (remeasureQueued) return;
+    remeasureQueued = true;
+    requestAnimationFrame(() => {
+      remeasureQueued = false;
+      if (!open) return;
+      if (isTextField(activeEl)) {
+        anchor = measureAnchor(activeEl, null, triggerStart);
+      } else {
+        const ctx = caretTextNode(activeEl);
+        anchor = ctx && measureAnchor(activeEl, ctx.node, triggerStart, ctx.offset);
+      }
+      if (anchor) placeDropdown(); else hideDropdown();
+    });
+  }
 
-  function getTextFieldCaret(el) {
+  // --- Where the trigger is on screen ---
+
+  const MIRRORED = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant', 'fontStretch', 'lineHeight',
+    'letterSpacing', 'wordSpacing', 'textIndent', 'textTransform', 'tabSize', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'];
+
+  function measureTextField(el, start) {
     const cs = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    const single = el.tagName === 'INPUT';
     const mirror = document.createElement('div');
-    mirror.style.cssText = 'position:fixed;left:-9999px;top:0;visibility:hidden;white-space:pre-wrap;word-wrap:break-word;';
-    mirror.style.font = cs.font;
-    mirror.style.padding = cs.padding;
-    mirror.style.border = cs.border;
-    mirror.style.boxSizing = cs.boxSizing;
-    mirror.style.width = cs.width;
-    mirror.style.letterSpacing = cs.letterSpacing;
-    mirror.style.textIndent = cs.textIndent;
-    mirror.style.lineHeight = cs.lineHeight;
-
-    mirror.textContent = el.value.substring(0, el.selectionStart);
+    for (const prop of MIRRORED) mirror.style[prop] = cs[prop];
+    mirror.style.position = 'fixed';
+    mirror.style.left = '-9999px';
+    mirror.style.top = '0';
+    mirror.style.visibility = 'hidden';
+    mirror.style.border = '0';
+    mirror.style.boxSizing = 'border-box';
+    mirror.style.width = el.clientWidth + 'px';
+    mirror.style.whiteSpace = single ? 'pre' : 'pre-wrap';
+    mirror.style.overflowWrap = 'break-word';
+    mirror.textContent = el.value.substring(0, start);
     const marker = document.createElement('span');
-    marker.textContent = '\u200b';
+    marker.textContent = '​';
     mirror.appendChild(marker);
-    document.body.appendChild(mirror);
+    document.documentElement.appendChild(mirror);
+    const from = mirror.getBoundingClientRect(), to = marker.getBoundingClientRect();
+    mirror.remove();
 
-    const mr = mirror.getBoundingClientRect(), sr = marker.getBoundingClientRect(), er = el.getBoundingClientRect();
-    const x = er.left + (sr.left - mr.left) - el.scrollLeft;
-    const y = er.top + (sr.top - mr.top) - el.scrollTop + parseFloat(cs.lineHeight || cs.fontSize);
-    document.body.removeChild(mirror);
-    return { x, y };
+    const x = box.left + el.clientLeft + (to.left - from.left) - el.scrollLeft;
+    const clampedX = Math.max(box.left, Math.min(x, box.right));
+    // A single-line field centers its text, so the field itself is the useful edge.
+    if (single) return { x: clampedX, top: box.top, bottom: box.bottom };
+    const top = box.top + el.clientTop + (to.top - from.top) - el.scrollTop;
+    return { x: clampedX, top, bottom: top + to.height };
   }
 
-  function getCECaret() {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return null;
-    const range = sel.getRangeAt(0).cloneRange();
-    range.collapse(true);
-    const rect = range.getBoundingClientRect();
-    if (rect.x === 0 && rect.y === 0) return null;
-    return { x: rect.left, y: rect.bottom };
-  }
-
-  function getTextContext(sel) {
-    if (!sel || !sel.rangeCount) return null;
-    const node = sel.getRangeAt(0).startContainer;
-    const offset = sel.getRangeAt(0).startOffset;
-    if (node.nodeType === Node.TEXT_NODE) return { node, offset };
-    if (node.childNodes.length && offset > 0) {
-      const child = node.childNodes[offset - 1];
-      if (child.nodeType === Node.TEXT_NODE) return { node: child, offset: child.length };
-      if (child.lastChild?.nodeType === Node.TEXT_NODE) return { node: child.lastChild, offset: child.lastChild.length };
-    }
-    return null;
+  function measureAnchor(el, node, start, offset) {
+    if (!node) return measureTextField(el, start);
+    if (start > node.length || offset > node.length) return null;
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, offset);
+    const rect = range.getClientRects()[0] || el.getBoundingClientRect();
+    return { x: rect.left, top: rect.top, bottom: rect.bottom };
   }
 
   // --- Replacement ---
 
-  function replaceText(el, start, end, text) {
-    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+  function replaceText(el, node, start, end, text) {
+    if (!node) {
       el.focus();
       el.setSelectionRange(start, end);
-      document.execCommand('insertText', false, text);
+      if (!document.execCommand('insertText', false, text)) {
+        el.setRangeText(text, start, end, 'end');
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+      }
+      return;
+    }
+    if (end > node.length) return;
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, end);
+    const sel = selectionFor(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    // execCommand fires no beforeinput, and Slate and CKEditor take edits from that event alone. They treat anything
+    // else as foreign and put their own text back. An editor that cancels this one has made the edit itself.
+    const handled = !el.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true, cancelable: true, composed: true, inputType: 'insertText', data: text, targetRanges: [new StaticRange(range)],
+    }));
+    if (!handled) document.execCommand('insertText', false, text);
+  }
+
+  // --- Reacting to text changes ---
+
+  function update(el, allowInstant) {
+    let node = null, cursor, before;
+    if (isTextField(el)) {
+      cursor = el.selectionStart;
+      if (cursor === null) { hideDropdown(); return; }
+      before = el.value.substring(0, cursor);
     } else {
-      const ctx = getTextContext(window.getSelection());
-      if (!ctx) return;
-      const range = document.createRange();
-      range.setStart(ctx.node, start);
-      range.setEnd(ctx.node, end);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      document.execCommand('insertText', false, text);
+      const ctx = caretTextNode(el);
+      if (!ctx) { hideDropdown(); return; }
+      node = ctx.node;
+      cursor = ctx.offset;
+      before = node.data.substring(0, cursor);
     }
-  }
 
-  // --- Search ---
-
-  function searchEmojis(query) {
-    const q = query.toLowerCase();
-    const prefix = [], contains = [];
-    for (const sc in EMOJI_DATA) {
-      if (sc.startsWith(q)) prefix.push({ shortcode: sc, emoji: EMOJI_DATA[sc] });
-      else if (sc.includes(q)) contains.push({ shortcode: sc, emoji: EMOJI_DATA[sc] });
+    const hit = findTrigger(before, autoReplace && allowInstant);
+    if (!hit) { dismissed = null; hideDropdown(); return; }
+    if (dismissed && dismissed.el === el && dismissed.start === hit.start) { hideDropdown(); return; }
+    if (hit.mode === 'instant') {
+      hideDropdown();
+      if (!node) replaceText(el, null, hit.start, cursor, hit.emoji);
+      else setTimeout(() => replaceInstantInEditor(el));
+      return;
     }
-    return [...prefix, ...contains].slice(0, 8);
-  }
-
-  // --- Contenteditable handler (shared between input + keyup fallback) ---
-
-  let inputFiredForCE = false;
-
-  function handleCE(el) {
-    const ctx = getTextContext(window.getSelection());
-    if (!ctx) { hideDropdown(); return; }
-    const { node, offset: cursor } = ctx;
-    const before = node.textContent.substring(0, cursor);
-    const hit = findTrigger(before);
-
-    if (!hit) { hideDropdown(); return; }
-    if (hit.mode === 'instant') { replaceText(el, hit.start, cursor, hit.emoji); hideDropdown(); return; }
 
     activeEl = el;
     triggerStart = hit.start;
     matches = hit.results;
     selectedIndex = 0;
-    const pos = getCECaret();
-    if (pos) showDropdown(pos.x, pos.y, matches);
+    showDropdown(el, node, hit.start, cursor);
   }
 
-  // --- Input handling ---
-
-  function isEditable(el) {
-    if (!el) return false;
-    const t = el.tagName;
-    return t === 'TEXTAREA' || (t === 'INPUT' && /^(|text|search|url|email)$/.test(el.type)) || el.isContentEditable;
+  // Rich editors reconcile the DOM right after this event and undo a change made inside it (Slate, CKEditor, Trix),
+  // so this runs once they are done, and checks the shortcode is still what sits before the caret.
+  function replaceInstantInEditor(el) {
+    const ctx = caretTextNode(el);
+    if (!ctx) return;
+    const hit = findTrigger(ctx.node.data.substring(0, ctx.offset));
+    if (hit?.mode === 'instant') replaceText(el, ctx.node, hit.start, ctx.offset, hit.emoji);
   }
 
-  document.addEventListener('input', (e) => {
+  function onTextChange(e, el) {
+    if (isComposing(e)) { hideDropdown(); return; }
+    const typing = e.inputType === 'insertText' || (ANDROID && e.inputType === 'insertCompositionText');
+    // Paste, undo and drag-and-drop put text here too. None of them are someone asking for an emoji.
+    if (!typing && !e.inputType?.startsWith('delete')) { hideDropdown(); return; }
+    update(el, typing && !!e.data?.endsWith(':'));
+  }
+
+  window.addEventListener('input', (e) => {
     if (!enabled) return;
-    const el = e.target;
-    if (!isEditable(el)) return;
-
-    if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
-      const cursor = el.selectionStart;
-      const before = el.value.substring(0, cursor);
-      const hit = findTrigger(before);
-
-      if (!hit) { hideDropdown(); return; }
-      if (hit.mode === 'instant') { replaceText(el, hit.start, cursor, hit.emoji); hideDropdown(); return; }
-
-      activeEl = el;
-      triggerStart = hit.start;
-      matches = hit.results;
-      selectedIndex = 0;
-      showDropdown(...Object.values(getTextFieldCaret(el)), matches);
-    } else if (el.isContentEditable) {
-      inputFiredForCE = true;
-      handleCE(el);
-    }
+    const el = e.composedPath()[0];
+    if (isEditable(el)) onTextChange(e, el);
   }, true);
 
-  // Fallback for editors that intercept input events (e.g. LinkedIn/Quill)
-  document.addEventListener('keyup', (e) => {
-    if (!enabled) return;
-    if (inputFiredForCE) { inputFiredForCE = false; return; }
-    if (e.key.length !== 1 && e.key !== 'Backspace' && e.key !== 'Delete') return;
-    const el = document.activeElement;
-    if (!el || !el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') return;
-    handleCE(el);
+  // Slate and others cancel beforeinput and write the DOM themselves, so no input event ever comes.
+  window.addEventListener('beforeinput', (e) => {
+    if (!enabled || !e.isTrusted) return;
+    const el = e.composedPath()[0];
+    setTimeout(() => {
+      if (e.defaultPrevented && isEditable(el)) onTextChange(e, el);
+    });
   }, true);
 
-  // --- Selection ---
+  // --- Picking ---
 
   function selectItem(index) {
     const item = matches[index];
     if (!item || !activeEl) return;
 
-    if (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT') {
-      replaceText(activeEl, triggerStart, activeEl.selectionStart, item.emoji);
-    } else if (activeEl.isContentEditable) {
-      const ctx = getTextContext(window.getSelection());
-      if (ctx) replaceText(activeEl, triggerStart, ctx.offset, item.emoji);
+    if (isTextField(activeEl)) {
+      replaceText(activeEl, null, triggerStart, activeEl.selectionStart, item.emoji);
+    } else {
+      const ctx = caretTextNode(activeEl);
+      if (ctx) replaceText(activeEl, ctx.node, triggerStart, ctx.offset, item.emoji);
     }
     hideDropdown();
   }
 
   // --- Keyboard ---
 
-  document.addEventListener('keydown', (e) => {
-    if (!dropdown || !dropdown.classList.contains('visible')) return;
+  const CARET_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']);
 
-    if (e.key === 'ArrowDown') { e.preventDefault(); selectedIndex = (selectedIndex + 1) % matches.length; updateSelection(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); selectedIndex = (selectedIndex - 1 + matches.length) % matches.length; updateSelection(); }
-    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); selectItem(selectedIndex); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideDropdown(); }
+  // On window, in capture, because that runs before any listener the page put on the field or document.
+  window.addEventListener('keydown', (e) => {
+    if (!open || e.isComposing || e.keyCode === 229) return;
+
+    const take = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+    const plain = !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey);
+
+    if (CARET_KEYS.has(e.key)) hideDropdown();
+    else if (e.key === 'Enter' || e.key === 'Tab') {
+      // Shift+Enter is a newline and Cmd+Enter is send. Neither is a pick.
+      if (plain) { take(); selectItem(selectedIndex); } else hideDropdown();
+    }
+    else if (e.key === 'ArrowDown') { take(); selectedIndex = (selectedIndex + 1) % matches.length; updateSelection(); }
+    else if (e.key === 'ArrowUp') { take(); selectedIndex = (selectedIndex - 1 + matches.length) % matches.length; updateSelection(); }
+    else if (e.key === 'Escape') { take(); dismissed = { el: activeEl, start: triggerStart }; hideDropdown(); }
   }, true);
 
   // --- Click outside ---
 
-  document.addEventListener('mousedown', (e) => {
-    if (dropdown && !dropdown.contains(e.target)) hideDropdown();
+  window.addEventListener('mousedown', (e) => {
+    if (open && !dropdown.contains(e.target)) hideDropdown();
   }, true);
 })();

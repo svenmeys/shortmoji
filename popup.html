@@ -1,6 +1,8 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="utf-8">
+  <title>Shortmoji</title>
   <style>
     body {
       width: 240px;
@@ -29,6 +31,7 @@
       font-size: 14px;
     }
     .switch {
+      display: block;
       position: relative;
       width: 40px;
       height: 22px;
@@ -59,6 +62,10 @@
     }
     .switch input:checked + .slider {
       background: #89b4fa;
+    }
+    .switch input:focus-visible + .slider {
+      outline: 2px solid #89b4fa;
+      outline-offset: 2px;
     }
     .switch input:checked + .slider::before {
       transform: translateX(18px);
@@ -96,20 +103,20 @@
 <body>
   <h1>Shortmoji</h1>
   <p>The colon is mightier than the mouse</p>
-  <div class="toggle">
+  <label class="toggle">
     <span>Enabled</span>
-    <label class="switch">
+    <span class="switch">
       <input type="checkbox" id="toggle" checked>
       <span class="slider"></span>
-    </label>
-  </div>
-  <div class="toggle" style="margin-top: 10px;">
+    </span>
+  </label>
+  <label class="toggle" style="margin-top: 10px;">
     <span>Auto-replace</span>
-    <label class="switch">
+    <span class="switch">
       <input type="checkbox" id="auto-replace" checked>
       <span class="slider"></span>
-    </label>
-  </div>
+    </span>
+  </label>
   <div class="hint">
     Type <code>:smi</code> or <code>#smi</code> and pick from the list.<br>
     Auto-replace: <code>:smile:</code> converts instantly.

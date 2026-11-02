@@ -1,45 +1,20 @@
 import { describe, test, expect } from 'bun:test';
 
-// Load emoji data by evaluating the file (it declares a global const)
-const dataFile = await Bun.file(import.meta.dir + '/../emoji-data.js').text();
-const EMOJI_DATA = new Function(dataFile + '; return EMOJI_DATA;')();
-
-// Extract pure functions from content.js for testing
-function searchEmojis(query) {
-  const q = query.toLowerCase();
-  const prefix = [], contains = [];
-  for (const sc in EMOJI_DATA) {
-    if (sc.startsWith(q)) prefix.push({ shortcode: sc, emoji: EMOJI_DATA[sc] });
-    else if (sc.includes(q)) contains.push({ shortcode: sc, emoji: EMOJI_DATA[sc] });
-  }
-  return [...prefix, ...contains].slice(0, 8);
-}
-
-function findTrigger(before, autoReplace = true) {
-  if (autoReplace) {
-    const instant = before.match(/:([a-z0-9_+\-]+):$/);
-    if (instant && EMOJI_DATA[instant[1]]) {
-      return { mode: 'instant', start: before.length - instant[0].length, emoji: EMOJI_DATA[instant[1]] };
-    }
-  }
-
-  const trigger = before.match(/[:#]([a-z0-9_+\-]{2,})$/);
-  if (!trigger) return null;
-
-  const pos = before.length - trigger[0].length;
-  if (pos > 0 && !/\s/.test(before[pos - 1])) return null;
-
-  const results = searchEmojis(trigger[1]);
-  if (!results.length) return null;
-
-  return { mode: 'autocomplete', start: pos, results };
-}
+// Load the files the extension ships, not a copy of them.
+const source = async (f) => Bun.file(`${import.meta.dir}/../${f}`).text();
+const { EMOJI_DATA, searchEmojis, findTrigger } = new Function(
+  `${await source('emoji-data.js')}\n${await source('match.js')}\nreturn { EMOJI_DATA: loadEmojiData(), searchEmojis, findTrigger };`
+)();
 
 // --- Tests ---
 
 describe('EMOJI_DATA', () => {
   test('has entries', () => {
     expect(Object.keys(EMOJI_DATA).length).toBeGreaterThan(1800);
+  });
+
+  test('every shortcode can be typed', () => {
+    for (const sc of Object.keys(EMOJI_DATA)) expect(sc).toMatch(/^[a-z0-9_+\-]+$/);
   });
 
   test('common shortcodes exist', () => {
@@ -68,6 +43,15 @@ describe('searchEmojis', () => {
     expect(shortcodes).toContain('heart');
     // Should also find things like "broken_heart" via contains
     expect(results.length).toBeGreaterThan(1);
+  });
+
+  test('exact match comes first', () => {
+    for (const q of ['ok', 'car', 'cat', 'man']) expect(searchEmojis(q)[0].shortcode).toBe(q);
+  });
+
+  test('two chars never match inside a word', () => {
+    expect(searchEmojis('-p')).toEqual([]);
+    expect(searchEmojis('-o')).toEqual([]);
   });
 
   test('returns max 8 results', () => {
@@ -173,6 +157,44 @@ describe('findTrigger', () => {
       const hit = findTrigger('#rock');
       expect(hit).not.toBeNull();
       expect(hit.mode).toBe('autocomplete');
+    });
+  });
+
+  describe('not shortcodes', () => {
+    test('object builtins', () => {
+      expect(findTrigger(':constructor:')).toBeNull();
+      expect(findTrigger(':__proto__:')).toBeNull();
+    });
+
+    test('colons in code and URLs', () => {
+      for (const s of ['x[a:b:', 'foo:fire:', 'http://x.io:100:', 'std::x:']) expect(findTrigger(s)).toBeNull();
+    });
+
+    test('issue numbers', () => {
+      expect(findTrigger('fixes #1234')).toBeNull();
+    });
+
+    test('closing colon without allowInstant', () => {
+      expect(findTrigger('see :fire:', false)).toBeNull();
+    });
+  });
+
+  describe('still shortcodes', () => {
+    test('right after an emoji or a bracket', () => {
+      expect(findTrigger('🔥:rocket:').emoji).toBe('🚀');
+      expect(findTrigger('(:fire:').emoji).toBe('🔥');
+      expect(findTrigger('(:roc').mode).toBe('autocomplete');
+    });
+
+    test('offsets stay right in text far longer than the search window', () => {
+      const long = 'x '.repeat(5000);
+      expect(findTrigger(long + ':fire:').start).toBe(long.length);
+      expect(findTrigger(long + ':roc').start).toBe(long.length);
+    });
+
+    test('100 and +1', () => {
+      expect(findTrigger(':100:').emoji).toBe('💯');
+      expect(findTrigger(':+1:').emoji).toBe('👍');
     });
   });
 

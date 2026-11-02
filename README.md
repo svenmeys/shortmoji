@@ -1,4 +1,4 @@
-# Shortmoji — Emoji Shortcodes for Chrome
+# Shortmoji — Emoji Shortcodes for Chrome and Firefox
 
 **The colon is mightier than the mouse.**
 
@@ -10,7 +10,7 @@ Type `:smile:` and get 😄. Anywhere on the web. No account, no tracking, no in
 2. A dropdown shows matching emoji — pick one with arrow keys + Enter/Tab
 3. Or type the full shortcode with closing colon (`:rocket:`) for instant replacement
 
-Works in text inputs, textareas, and contenteditable fields (Gmail, Notion, Slack web, etc).
+Works in text inputs, textareas and rich text editors. Tested against Quill, ProseMirror, Lexical, Slate, Draft.js, CKEditor 5, TinyMCE, Trix and CodeMirror 6.
 
 ## Install
 
@@ -26,11 +26,18 @@ Works in text inputs, textareas, and contenteditable fields (Gmail, Notion, Slac
 - **Instant replace** — type `:fire:` and it becomes 🔥 immediately
 - **Two triggers** — `:fire` (Slack-style) or `#fire` (quick pound key)
 - **Autocomplete** — type 2+ chars and pick from a dropdown
-- **Works everywhere** — text inputs, textareas, contenteditable (Gmail, Notion, etc)
+- **Works in rich text editors** — plus open shadow roots and `about:blank` iframes
 - **Keyboard navigation** — arrow keys, Enter/Tab to select, Escape to dismiss
 - **Toggle on/off** — click the extension icon
 - **Zero dependencies** — pure vanilla JS, no build step, no framework
 - **No tracking** — no analytics, no telemetry, no data collection
+
+## Where It Stops
+
+- **Google Docs and other canvas editors:** nothing to attach to. Monaco is the same story, it takes text through EditContext.
+- **Closed shadow roots:** the browser hides them from extensions.
+- **Syntax-highlighted code editors:** the dropdown works, but `:fire:` may not convert on the closing colon. The highlighter splits it across DOM nodes.
+- **Email and password fields:** left alone on purpose.
 
 ## Shortcode Reference
 
@@ -54,9 +61,15 @@ Common examples:
 No build step. Edit the files, reload the extension in `chrome://extensions/`.
 
 ```
+bun test              # matching logic and emoji data
+python3 test/e2e.py   # the real extension in a real browser (needs Python Playwright)
+```
+
+```
 shortmoji/
 ├── manifest.json      # Chrome extension manifest (V3)
 ├── content.js         # Content script — input detection, dropdown, replacement
+├── match.js           # Shortcode matching and search, no DOM
 ├── emoji-data.js      # Shortcode → emoji mapping (generated from gemoji)
 ├── styles.css         # Dropdown styling
 ├── popup.html         # Extension popup (toggle on/off)

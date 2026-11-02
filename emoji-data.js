@@ -1,4 +1,5 @@
-const EMOJI_DATA = {
+// Inside a function so frames nobody types in never pay for it. V8 only scans an uncalled function.
+function loadEmojiData() { return {
   'grinning': '😀',
   'smiley': '😃',
   'smile': '😄',
@@ -1912,5 +1913,4 @@ const EMOJI_DATA = {
   'england': '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
   'scotland': '🏴󠁧󠁢󠁳󠁣󠁴󠁿',
   'wales': '🏴󠁧󠁢󠁷󠁬󠁳󠁿'
-};
-
+}; }

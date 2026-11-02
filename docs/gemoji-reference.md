@@ -24,9 +24,10 @@ for e in data:
     if 'emoji' in e and 'aliases' in e:
         for alias in e['aliases']:
             lines.append(f\"  '{alias}': '{e['emoji']}'\")
-print('const EMOJI_DATA = {')
+print('// Inside a function so frames nobody types in never pay for it. V8 only scans an uncalled function.')
+print('function loadEmojiData() { return {')
 print(',\n'.join(lines))
-print('};')
+print('}; }')
 " > emoji-data.js
 ```
 
