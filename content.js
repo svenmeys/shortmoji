@@ -130,6 +130,19 @@
     return { x: rect.left, y: rect.bottom };
   }
 
+  function getTextContext(sel) {
+    if (!sel || !sel.rangeCount) return null;
+    const node = sel.getRangeAt(0).startContainer;
+    const offset = sel.getRangeAt(0).startOffset;
+    if (node.nodeType === Node.TEXT_NODE) return { node, offset };
+    if (node.childNodes.length && offset > 0) {
+      const child = node.childNodes[offset - 1];
+      if (child.nodeType === Node.TEXT_NODE) return { node: child, offset: child.length };
+      if (child.lastChild?.nodeType === Node.TEXT_NODE) return { node: child.lastChild, offset: child.lastChild.length };
+    }
+    return null;
+  }
+
   // --- Replacement ---
 
   function replaceText(el, start, end, text) {
@@ -138,13 +151,12 @@
       el.setSelectionRange(start, end);
       document.execCommand('insertText', false, text);
     } else {
-      const sel = window.getSelection();
-      if (!sel.rangeCount) return;
-      const node = sel.getRangeAt(0).startContainer;
-      if (node.nodeType !== Node.TEXT_NODE) return;
+      const ctx = getTextContext(window.getSelection());
+      if (!ctx) return;
       const range = document.createRange();
-      range.setStart(node, start);
-      range.setEnd(node, end);
+      range.setStart(ctx.node, start);
+      range.setEnd(ctx.node, end);
+      const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
       document.execCommand('insertText', false, text);
@@ -161,6 +173,28 @@
       else if (sc.includes(q)) contains.push({ shortcode: sc, emoji: EMOJI_DATA[sc] });
     }
     return [...prefix, ...contains].slice(0, 8);
+  }
+
+  // --- Contenteditable handler (shared between input + keyup fallback) ---
+
+  let inputFiredForCE = false;
+
+  function handleCE(el) {
+    const ctx = getTextContext(window.getSelection());
+    if (!ctx) { hideDropdown(); return; }
+    const { node, offset: cursor } = ctx;
+    const before = node.textContent.substring(0, cursor);
+    const hit = findTrigger(before);
+
+    if (!hit) { hideDropdown(); return; }
+    if (hit.mode === 'instant') { replaceText(el, hit.start, cursor, hit.emoji); hideDropdown(); return; }
+
+    activeEl = el;
+    triggerStart = hit.start;
+    matches = hit.results;
+    selectedIndex = 0;
+    const pos = getCECaret();
+    if (pos) showDropdown(pos.x, pos.y, matches);
   }
 
   // --- Input handling ---
@@ -190,25 +224,19 @@
       selectedIndex = 0;
       showDropdown(...Object.values(getTextFieldCaret(el)), matches);
     } else if (el.isContentEditable) {
-      const sel = window.getSelection();
-      if (!sel.rangeCount) return;
-      const node = sel.getRangeAt(0).startContainer;
-      if (node.nodeType !== Node.TEXT_NODE) { hideDropdown(); return; }
-
-      const cursor = sel.getRangeAt(0).startOffset;
-      const before = node.textContent.substring(0, cursor);
-      const hit = findTrigger(before);
-
-      if (!hit) { hideDropdown(); return; }
-      if (hit.mode === 'instant') { replaceText(el, hit.start, cursor, hit.emoji); hideDropdown(); return; }
-
-      activeEl = el;
-      triggerStart = hit.start;
-      matches = hit.results;
-      selectedIndex = 0;
-      const pos = getCECaret();
-      if (pos) showDropdown(pos.x, pos.y, matches);
+      inputFiredForCE = true;
+      handleCE(el);
     }
+  }, true);
+
+  // Fallback for editors that intercept input events (e.g. LinkedIn/Quill)
+  document.addEventListener('keyup', (e) => {
+    if (!enabled) return;
+    if (inputFiredForCE) { inputFiredForCE = false; return; }
+    if (e.key.length !== 1 && e.key !== 'Backspace' && e.key !== 'Delete') return;
+    const el = document.activeElement;
+    if (!el || !el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') return;
+    handleCE(el);
   }, true);
 
   // --- Selection ---
@@ -220,8 +248,8 @@
     if (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'INPUT') {
       replaceText(activeEl, triggerStart, activeEl.selectionStart, item.emoji);
     } else if (activeEl.isContentEditable) {
-      const sel = window.getSelection();
-      if (sel.rangeCount) replaceText(activeEl, triggerStart, sel.getRangeAt(0).startOffset, item.emoji);
+      const ctx = getTextContext(window.getSelection());
+      if (ctx) replaceText(activeEl, triggerStart, ctx.offset, item.emoji);
     }
     hideDropdown();
   }
@@ -234,7 +262,7 @@
     if (e.key === 'ArrowDown') { e.preventDefault(); selectedIndex = (selectedIndex + 1) % matches.length; updateSelection(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); selectedIndex = (selectedIndex - 1 + matches.length) % matches.length; updateSelection(); }
     else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); selectItem(selectedIndex); }
-    else if (e.key === 'Escape') { e.preventDefault(); hideDropdown(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideDropdown(); }
   }, true);
 
   // --- Click outside ---
