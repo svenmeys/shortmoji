@@ -67,11 +67,10 @@ class T:
             "s => { const e = document.querySelector(s); return 'value' in e ? e.value : e.innerText.replace(/\\n$/, '') }", sel)
 
     def open(self, frame=None):
-        return (frame or self.page).evaluate(
-            "s => { const d = document.querySelector(s); return !!d && d.classList.contains('visible') }", DD)
+        return (frame or self.page).evaluate("s => !!document.querySelector(s)", DD)
 
     def codes(self):
-        return self.page.locator(f"{DD} .shortcode").all_inner_texts()
+        return self.page.locator(f"{DD} [role=option] span:last-child").all_inner_texts()
 
     def box(self):
         return self.page.locator(DD).bounding_box()
@@ -79,11 +78,6 @@ class T:
     def paste(self, text):
         self.page.evaluate("t => navigator.clipboard.writeText(t)", text)
         self.press(f"{MOD}+v")
-
-    def caret(self, sel="#t"):
-        """Measured from the page side, so it cannot share a bug with the extension."""
-        return self.page.evaluate(
-            "s => { const r = getSelection().getRangeAt(0).getClientRects()[0]; return r && {x:r.x, top:r.top, bottom:r.bottom} }", sel)
 
 
 # --- What the extension is for ---
@@ -121,7 +115,7 @@ def arrows_then_enter_pick_second(c):
 @scenario
 def click_picks_from_dropdown(c):
     t = T(c, TA); t.focus(); t.type(":rocke")
-    t.page.locator(f"{DD} .shortmoji-item").first.click(); eq(t.value(), "🚀")
+    t.page.locator(f"{DD} [role=option]").first.click(); eq(t.value(), "🚀")
     eq(t.page.evaluate("document.activeElement.id"), "t", "focus after click")
 
 @scenario
@@ -146,13 +140,15 @@ def toggle_off_and_auto_replace_off(c):
     t = T(c, TA)
     ext = extension_id(c)
     p = c.new_page(); p.goto(f"chrome-extension://{ext}/popup.html")
-    p.locator(".switch").nth(1).click(); t.page.wait_for_timeout(100)
-    t.focus(); t.type(":fire:"); eq(t.value(), ":fire:", "auto-replace off")
-    t.page.evaluate("t.value=''"); t.type(":rocke"); ok(t.open(), "dropdown must still work"); t.press("Enter"); eq(t.value(), "🚀")
-    p.locator(".switch").nth(1).click(); p.locator(".switch").nth(0).click(); t.page.wait_for_timeout(100)
-    t.page.evaluate("t.value=''"); t.type(":fire:"); eq(t.value(), ":fire:", "disabled")
-    t.page.evaluate("t.value=''"); t.type(":rocke"); ok(not t.open(), "dropdown while disabled")
-    p.locator(".switch").nth(0).click(); p.close()
+    try:
+        p.locator(".switch").nth(1).click(); t.page.wait_for_timeout(100)
+        t.focus(); t.type(":fire:"); eq(t.value(), ":fire:", "auto-replace off")
+        t.page.evaluate("t.value=''"); t.type(":rocke"); ok(t.open(), "dropdown must still work"); t.press("Enter"); eq(t.value(), "🚀")
+        p.locator(".switch").nth(1).click(); p.locator(".switch").nth(0).click(); t.page.wait_for_timeout(100)
+        t.page.evaluate("t.value=''"); t.type(":fire:"); eq(t.value(), ":fire:", "disabled")
+        t.page.evaluate("t.value=''"); t.type(":rocke"); ok(not t.open(), "dropdown while disabled")
+    finally:  # one profile serves every scenario, so a failure here must not poison the rest
+        p.evaluate("chrome.storage.sync.set({enabled: true, autoReplace: true})"); p.close()
 
 @scenario
 def popup_switches_have_names_and_keyboard_focus(c):
@@ -170,7 +166,7 @@ def disabling_hides_an_open_dropdown(c):
     t.focus(); t.type(":rocke"); ok(t.open(), "dropdown closed")
     p.locator(".switch").nth(0).click(); t.page.wait_for_timeout(100)
     closed = not t.open()
-    p.locator(".switch").nth(0).click(); p.close()
+    p.evaluate("chrome.storage.sync.set({enabled: true, autoReplace: true})"); p.close()
     ok(closed, "dropdown still open after disabling")
 
 
@@ -267,7 +263,6 @@ def composition_is_not_interrupted(c):
 def enter_during_composition_is_not_a_pick(c):
     t = T(c, TA); t.focus(); s = c.new_cdp_session(t.page)
     t.type(":roc"); ok(t.open(), "dropdown closed")
-    t.page.evaluate("window.shortmojiProbe = 0")
     s.send("Input.imeSetComposition", {"text": "け", "selectionStart": 1, "selectionEnd": 1})
     ok(not t.open(), "dropdown open while composing")
 
@@ -312,23 +307,132 @@ def short_window_never_covers_the_line_being_typed(c):
 def resting_pointer_does_not_look_like_a_choice(c):
     t = T(c, "<body style='margin:20px'><div id=t contenteditable style='height:30px'></div>")
     t.focus(); t.page.mouse.move(120, 170); t.type(":smi"); ok(t.open(), "dropdown closed")
-    bg = "[...document.querySelectorAll('.shortmoji-item')].map(r => getComputedStyle(r).backgroundColor)"
+    bg = "[...document.querySelector('#shortmoji-dropdown').shadowRoot.children].map(r => getComputedStyle(r).backgroundColor)"
     t.page.wait_for_timeout(150); colors = t.page.evaluate(bg)
     eq(len({*colors[1:]}), 1, "unselected rows should look the same"); ok(colors[0] != colors[1], "first row should stand out")
-    first = t.codes()[0]; t.press("Enter"); ok(":smi" not in t.value(), "not picked")
+    t.press("Enter"); ok(":smi" not in t.value(), "not picked")
 
 @scenario
 def moving_the_pointer_selects_the_row_under_it(c):
     t = T(c, TA); t.focus(); t.type(":smi")
-    third = t.page.locator(f"{DD} .shortmoji-item").nth(2); box = third.bounding_box()
+    third = t.page.locator(f"{DD} [role=option]").nth(2); box = third.bounding_box()
     t.page.mouse.move(box["x"] + 20, box["y"] + 5); t.page.mouse.move(box["x"] + 30, box["y"] + 6)
-    eq(t.page.locator(f"{DD} [aria-selected=true] .shortcode").inner_text(), third.locator(".shortcode").inner_text(), "selected row")
+    eq(t.page.locator(f"{DD} [aria-selected=true] span:last-child").inner_text(), third.locator("span:last-child").inner_text(), "selected row")
 
 @scenario
 def dropdown_follows_the_page_when_it_scrolls(c):
     t = T(c, "<body style='margin:20px'><div id=t contenteditable style='height:40px;border:1px solid'></div><div style='height:3000px'></div>")
     t.focus(); t.type(":roc"); y0 = t.box()["y"]; t.page.evaluate("scrollTo(0,10)"); t.page.wait_for_timeout(60)
     ok(not t.open() or abs(t.box()["y"] - (y0 - 10)) < 2, f"dropdown stuck at {t.box()['y']} after scrolling 10px from {y0}")
+
+VISIBLE = """() => { const d = document.querySelector('#shortmoji-dropdown'); const r = d.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 20); return !!hit && d.contains(hit) }"""
+TOP_LAYER = {
+    "modal dialog": "<dialog id=d><textarea id=t rows=4></textarea></dialog><script>d.showModal()</script>",
+    "page popover": "<div id=d popover=auto><textarea id=t rows=4></textarea></div><script>d.showPopover()</script>",
+    "transformed modal": "<dialog id=d style='transform:translateX(30px)'><textarea id=t rows=4></textarea></dialog><script>d.showModal()</script>",
+}
+
+@scenario
+def dropdown_shows_and_clicks_above_the_top_layer(c):
+    for name, html in TOP_LAYER.items():
+        t = T(c, html); t.focus(); t.type(":rocke"); ok(t.page.evaluate(VISIBLE), f"{name}: dropdown covered")
+        r = t.page.locator("#t").bounding_box(); b = t.box(); ok(abs(b["y"] - r["y"]) < 60, f"{name}: dropdown y={b['y']}, field y={r['y']}")
+        t.page.locator(f"{DD} [role=option]").first.click(timeout=3000); eq(t.value(), "🚀", name)
+        eq(t.page.evaluate("d.matches('[open],:popover-open')"), True, f"{name} stayed open"); t.page.close()
+
+@scenario
+def dialog_in_a_shadow_root(c):
+    t = T(c, "<div id=h></div><script>const r=h.attachShadow({mode:'open'});r.innerHTML=`<dialog id=d><textarea id=t rows=4></textarea></dialog>`;r.querySelector('dialog').showModal()</script>")
+    t.page.locator("#t").click(); t.type(":rocke"); t.page.locator(f"{DD} [role=option]").first.click(timeout=3000)
+    eq(t.page.evaluate("h.shadowRoot.querySelector('#t').value"), "🚀")
+
+@scenario
+def fullscreen_element_shows_the_dropdown(c):
+    t = T(c, "<div id=d style='background:#fff'><textarea id=t rows=4></textarea></div><button id=b onclick='d.requestFullscreen()'>go</button>")
+    t.page.locator("#b").click(); t.page.wait_for_timeout(300); t.focus(); t.type(":roc"); ok(t.page.evaluate(VISIBLE), "dropdown covered")
+
+@scenario
+def page_css_cannot_touch_the_dropdown(c):
+    css = """<style>.emoji,.shortcode{display:none!important}.selected{background:red!important}.visible{display:none!important;visibility:hidden!important}
+      div{padding:40px!important;display:none!important;width:50px!important} span{font-size:0!important;display:none!important} *{color:lime!important;box-sizing:content-box}</style>"""
+    t = T(c, css + "<textarea id=t></textarea>"); t.focus(); t.type(":roc"); ok(t.open(), "dropdown closed"); ok(t.page.evaluate(VISIBLE), "dropdown not on screen")
+    row = t.page.locator(f"{DD} [role=option]").first; ok(row.is_visible(), "row hidden"); ok(row.locator("span").first.is_visible(), "emoji hidden"); ok(row.locator("span").last.is_visible(), "shortcode hidden")
+    ok(t.box()["height"] < 300, f"page CSS changed the size: {t.box()}")
+
+@scenario
+def strict_csp_page(c):
+    p = c.new_page()
+    p.route(URL, lambda r: r.fulfill(body="<textarea id=t></textarea>", content_type="text/html; charset=utf-8", headers={"Content-Security-Policy": "default-src 'none'"}))
+    p.goto(URL); p.wait_for_timeout(120); p.locator("#t").click(); p.keyboard.type(":rocke")
+    ok(p.locator(f"{DD} [role=option]").first.evaluate("r => getComputedStyle(r).display") == "flex", "styles blocked"); p.keyboard.press("Enter"); eq(p.locator("#t").input_value(), "🚀")
+
+@scenario
+def nothing_left_in_the_page_when_closed(c):
+    t = T(c, TA); t.focus(); eq(t.page.locator(DD).count(), 0, "before typing"); t.type(":roc"); eq(t.page.locator(DD).count(), 1, "open"); t.press("Escape"); eq(t.page.locator(DD).count(), 0, "after Escape")
+
+@scenario
+def page_removing_the_open_dropdown_does_not_trap_enter(c):
+    t = T(c, TA); t.focus(); t.type(":roc"); t.page.evaluate("document.querySelector('#shortmoji-dropdown').remove()"); t.press("Enter"); eq(t.value(), ":roc\n")
+
+@scenario
+def field_removed_while_open_gives_enter_back(c):
+    t = T(c, TA + "<script>window.keys=0;addEventListener('keydown',e=>{if(e.key==='Enter')keys++})</script>"); t.focus(); t.type(":roc")
+    t.page.evaluate("t.remove()"); t.press("Enter"); eq(t.page.evaluate("keys"), 1, "Enter seen by the page"); ok(not t.open(), "still open")
+
+@scenario
+def select_all_closes_the_dropdown(c):
+    t = T(c, TA); t.focus(); t.type("abc :roc"); t.press(f"{MOD}+a"); ok(not t.open(), "open after select all"); t.press("Backspace"); eq(t.value(), "")
+
+@scenario
+def typing_shift_characters_keeps_it_open(c):
+    t = T(c, TA); t.focus(); t.type(":smiling_"); ok(t.open(), "underscore closed the dropdown"); t.press("Shift"); ok(t.open(), "Shift closed the dropdown")
+
+@scenario
+def shortcode_that_wraps_moves_the_dropdown_with_it(c):
+    t = T(c, "<body style='margin:20px'><textarea id=t rows=6 style='font:14px monospace;line-height:20px;width:200px'></textarea>"); t.focus(); t.type("aaaa bbbb cccc dddd :smiling_face")
+    b = t.box(); r = t.page.locator("#t").bounding_box(); ok(b["y"] >= r["y"] + 40, f"dropdown y={b['y']} is on the first line of a field at y={r['y']}"); ok(b["x"] < r["x"] + 40, f"dropdown x={b['x']} did not follow the wrap")
+
+@scenario
+def rtl_textarea_dropdown_is_near_the_text(c):
+    t = T(c, "<body style='margin:20px'><textarea id=t dir=rtl style='width:500px;height:100px'></textarea>"); t.focus(); t.type("abc :roc")
+    ok(t.box()["x"] > 300, f"dropdown x={t.box()['x']} is at the far side of an RTL field ending at 520")
+
+@scenario
+def right_aligned_input_dropdown_is_near_the_text(c):
+    t = T(c, "<body style='margin:20px'><input id=t style='width:400px;text-align:right'>"); t.focus(); t.type("abc :roc")
+    ok(t.box()["x"] > 300, f"dropdown x={t.box()['x']} is at the far side of a right-aligned field ending at 420")
+
+@scenario
+def scaled_field_dropdown_is_near_the_text(c):
+    t = T(c, "<body style='margin:0'><div style='transform:scale(2);transform-origin:0 0;margin:20px'><textarea id=t style='width:220px;height:60px;font:14px monospace;line-height:20px;padding:0;border:0'></textarea></div>")
+    t.focus(); t.type("hello world :roc"); b = t.box(); r = t.page.locator("#t").bounding_box()
+    ok(abs(b["x"] - (r["x"] + 2 * 12 * 8.4)) < 40, f"dropdown x={b['x']}, the text is near {r['x'] + 2 * 12 * 8.4}")
+    ok(b["y"] >= r["y"] + 30, f"dropdown y={b['y']} sits over a scaled line starting at {r['y']}")
+
+@scenario
+def clicking_the_edge_of_the_list_keeps_it_open(c):
+    t = T(c, TA); t.focus(); t.type(":smi"); b = t.box(); t.page.mouse.click(b["x"] + b["width"] - 3, b["y"] + 60); ok(t.open(), "list closed"); eq(t.value(), ":smi"); eq(t.page.evaluate("document.activeElement.id"), "t", "focus")
+
+@scenario
+def frame_too_short_for_a_row_gives_the_keys_back(c):
+    t = T(c, f"<iframe src='{URL}frame' height=70 width=400 style='border:0'></iframe>", {f"{URL}frame": "<body style='margin:4px'><textarea id=t rows=1></textarea>"}); t.page.wait_for_timeout(150)
+    fr = t.page.frames[1]; fr.locator("#t").click(); t.type(":smi"); ok(not t.open(frame=fr), "a sliver of a list is open"); t.press("Enter"); eq(t.value(frame=fr), ":smi\n")
+    fr.evaluate("document.querySelector('#t').value = ''"); t.type(":fire:"); eq(t.value(frame=fr), "🔥", "instant still works")
+
+@scenario
+def uppercase_colon_shortcodes_work(c):
+    t = T(c, TA); t.focus(); t.type(":FIRE:"); eq(t.value(), "🔥"); t.page.evaluate("t.value=''"); t.type(":Rocke"); ok(t.open(), "dropdown closed"); t.press("Enter"); eq(t.value(), "🚀")
+
+@scenario
+def uppercase_after_a_pound_sign_stays_a_hashtag(c):
+    t = T(c, TA); t.focus(); t.type("#Fire"); ok(not t.open(), "dropdown for #Fire")
+
+@scenario
+def xhtml_document(c):
+    p = c.new_page(); doc = '<html xmlns="http://www.w3.org/1999/xhtml"><body><textarea id="t"></textarea></body></html>'
+    p.route(URL, lambda r: r.fulfill(body=doc, content_type="application/xhtml+xml")); p.goto(URL); p.wait_for_timeout(120)
+    p.locator("#t").click(); p.keyboard.type(":fire:"); eq(p.evaluate("document.getElementById('t').value"), "🔥")
 
 @scenario
 def exact_match_is_first(c):

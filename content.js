@@ -26,13 +26,13 @@
     if (c.autoReplace) autoReplace = c.autoReplace.newValue;
   });
 
-  const isTextField = (el) => el.tagName === 'TEXTAREA' || el.tagName === 'INPUT';
+  const isTextField = (el) => el.localName === 'textarea' || el.localName === 'input'; // tagName is lowercase in XHTML
 
   // Email fields stay out: they report selectionStart as null, so nothing can be replaced in them.
   function isEditable(el) {
-    if (!el || !el.tagName) return false;
-    if (el.tagName === 'TEXTAREA') return true;
-    if (el.tagName === 'INPUT') return /^(|text|search|url)$/.test(el.type);
+    if (!el || !el.localName) return false;
+    if (el.localName === 'textarea') return true;
+    if (el.localName === 'input') return /^(|text|search|url)$/.test(el.type);
     return el.isContentEditable || el.ownerDocument.designMode === 'on'; // Firefox says false in designMode
   }
 
@@ -62,71 +62,110 @@
 
   // --- Dropdown ---
 
-  function renderDropdown() {
+  // Styles are inline, in a shadow root: a page's own .selected or span rules cannot reach them, and CSP does not apply.
+  const HOST_CSS = `all:initial!important;display:block!important;position:fixed!important;z-index:2147483647!important;
+    box-sizing:border-box!important;margin:0!important;inset:auto!important;width:auto!important;height:auto!important;
+    min-width:220px!important;max-width:calc(100vw - 16px)!important;max-height:280px!important;overflow-y:auto!important;
+    padding:4px!important;background:#1e1e2e!important;border:1px solid #45475a!important;border-radius:8px!important;
+    box-shadow:0 8px 24px rgba(0,0,0,.4)!important;
+    font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif!important;color:#cdd6f4!important;`;
+  const ROW_CSS = 'display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:6px;cursor:pointer;';
+  // The outline is what survives Windows high contrast, which drops the background.
+  const SELECTED_CSS = 'background:#313244;outline:1px solid #89b4fa;outline-offset:-1px;';
+  const EMOJI_CSS = 'font-size:20px;width:28px;text-align:center;flex-shrink:0;';
+  const CODE_CSS = 'color:#a6adc8;font-size:12px;';
+
+  // Top layer elements (modal dialogs, fullscreen, popovers) cover everything outside them, and a modal makes the rest
+  // of the page inert. The list has to live inside whichever one holds the field.
+  function dropdownParent(el) {
+    for (let n = el; n; n = n.parentNode || n.host) {
+      if (n.matches && n.matches('dialog[open], [popover], :fullscreen')) return n;
+    }
+    return document.documentElement;
+  }
+
+  function connectDropdown(el) {
     if (!dropdown) {
       dropdown = document.createElement('div');
       dropdown.id = 'shortmoji-dropdown';
       dropdown.setAttribute('role', 'listbox');
       dropdown.setAttribute('aria-label', 'Emoji');
-      document.documentElement.appendChild(dropdown);
+      dropdown.setAttribute('popover', 'manual');
+      dropdown.style.cssText = HOST_CSS;
+      dropdown.attachShadow({ mode: 'open' });
+      // A press on the padding or scrollbar must not take focus from the field, which would close the list.
+      dropdown.addEventListener('mousedown', (e) => e.preventDefault());
     }
-    dropdown.replaceChildren(...matches.map((item, i) => {
+    if (dropdown.isConnected) return;
+    dropdownParent(el).appendChild(dropdown);
+    dropdown.showPopover?.();
+  }
+
+  function renderDropdown() {
+    dropdown.shadowRoot.replaceChildren(...matches.map((item, i) => {
       const row = document.createElement('div');
-      row.className = 'shortmoji-item' + (i === selectedIndex ? ' selected' : '');
+      row.style.cssText = ROW_CSS + (i === selectedIndex ? SELECTED_CSS : '');
       row.setAttribute('role', 'option');
       row.setAttribute('aria-selected', String(i === selectedIndex));
       const emoji = document.createElement('span');
-      emoji.className = 'emoji';
+      emoji.style.cssText = EMOJI_CSS;
       emoji.textContent = item.emoji;
       const code = document.createElement('span');
-      code.className = 'shortcode';
+      code.style.cssText = CODE_CSS;
       code.textContent = `:${item.shortcode}:`;
       row.append(emoji, code);
       row.addEventListener('mousedown', (e) => { e.preventDefault(); selectItem(i); });
-      // mousemove, not hover: a pointer that happens to rest under the list must not look like a choice.
-      row.addEventListener('mousemove', () => {
-        if (selectedIndex !== i) { selectedIndex = i; updateSelection(); }
+      // Only real movement counts: browsers send a still mousemove when the list scrolls under a resting pointer.
+      row.addEventListener('mousemove', (e) => {
+        if ((e.movementX || e.movementY) && selectedIndex !== i) { selectedIndex = i; updateSelection(); }
       });
       return row;
     }));
   }
 
+  const ONE_ROW = 52;
+
   function placeDropdown() {
-    dropdown.classList.add('visible');
-    dropdown.style.maxHeight = '';
+    dropdown.style.setProperty('max-height', '280px', 'important');
     const width = dropdown.offsetWidth, height = dropdown.offsetHeight;
-    dropdown.style.left = Math.max(8, Math.min(anchor.x, window.innerWidth - width - 8)) + 'px';
+    dropdown.style.setProperty('left', Math.max(8, Math.min(anchor.x, window.innerWidth - width - 8)) + 'px', 'important');
     // Never over the line being typed: take the roomier side and scroll inside it if the list does not fit.
     const below = window.innerHeight - anchor.bottom - 12, above = anchor.top - 12;
     const useBelow = height <= below || below >= above;
     const shown = Math.min(height, useBelow ? below : above);
-    if (shown < height) dropdown.style.maxHeight = shown + 'px';
-    dropdown.style.top = (useBelow ? anchor.bottom + 4 : anchor.top - shown - 4) + 'px';
+    // Less than a row in view, as in a short iframe or a field scrolled away: no list, so the keys stay the page's.
+    if (shown < Math.min(height, ONE_ROW)) { hideDropdown(); return; }
+    dropdown.style.setProperty('max-height', shown + 'px', 'important');
+    dropdown.style.setProperty('top', (useBelow ? anchor.bottom + 4 : anchor.top - shown - 4) + 'px', 'important');
   }
 
-  // Measuring a long textarea takes tens of milliseconds, so it happens once per trigger, not per keystroke.
+  // A shortcode can wrap to the next line while it is typed, so normally this measures on every key.
+  // pa-lean: in a long textarea measuring takes tens of milliseconds, so it happens once per shortcode there.
+  // Ceiling: the list can sit one line off if the shortcode wraps. Upgrade path: an incremental layout cache.
+  const CHEAP_TO_MEASURE = 20000;
   function showDropdown(el, node, start, offset) {
     const key = node || el;
-    if (!anchorFor || anchorFor.key !== key || anchorFor.start !== start) {
+    const same = anchorFor && anchorFor.key === key && anchorFor.start === start;
+    if (!same || node || el.value.length <= CHEAP_TO_MEASURE) {
       anchor = measureAnchor(el, node, start, offset);
       anchorFor = { key, start };
     }
     if (!anchor) { hideDropdown(); return; }
+    connectDropdown(el);
     renderDropdown();
-    placeDropdown();
     if (!open) {
       open = true;
       window.addEventListener('scroll', remeasure, { capture: true, passive: true });
       window.addEventListener('resize', remeasure);
       window.addEventListener('focusout', hideDropdown, true);
     }
+    placeDropdown();
   }
 
   function hideDropdown() {
     if (open) {
       open = false;
-      dropdown.classList.remove('visible');
-      dropdown.replaceChildren();
+      dropdown.remove(); // nothing of ours stays in the page while the list is closed
       window.removeEventListener('scroll', remeasure, { capture: true });
       window.removeEventListener('resize', remeasure);
       window.removeEventListener('focusout', hideDropdown, true);
@@ -139,12 +178,12 @@
   }
 
   function updateSelection() {
-    const items = dropdown.querySelectorAll('.shortmoji-item');
-    items.forEach((el, i) => {
-      el.classList.toggle('selected', i === selectedIndex);
-      el.setAttribute('aria-selected', String(i === selectedIndex));
+    const rows = dropdown.shadowRoot.children;
+    [...rows].forEach((row, i) => {
+      row.style.cssText = ROW_CSS + (i === selectedIndex ? SELECTED_CSS : '');
+      row.setAttribute('aria-selected', String(i === selectedIndex));
     });
-    items[selectedIndex]?.scrollIntoView({ block: 'nearest' });
+    rows[selectedIndex]?.scrollIntoView({ block: 'nearest' });
   }
 
   let remeasureQueued = false;
@@ -166,38 +205,38 @@
 
   // --- Where the trigger is on screen ---
 
-  const MIRRORED = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant', 'fontStretch', 'lineHeight',
-    'letterSpacing', 'wordSpacing', 'textIndent', 'textTransform', 'tabSize', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'];
+  const MIRRORED = ['font-family', 'font-size', 'font-weight', 'font-style', 'font-variant', 'font-stretch', 'line-height',
+    'letter-spacing', 'word-spacing', 'text-indent', 'text-transform', 'tab-size', 'direction', 'text-align',
+    'padding-top', 'padding-right', 'padding-bottom', 'padding-left'];
 
   function measureTextField(el, start) {
     const cs = getComputedStyle(el);
     const box = el.getBoundingClientRect();
-    const single = el.tagName === 'INPUT';
+    const single = el.localName === 'input';
+    // Same defence as the list: a page rule on div or span must not change what gets measured.
     const mirror = document.createElement('div');
-    for (const prop of MIRRORED) mirror.style[prop] = cs[prop];
-    mirror.style.position = 'fixed';
-    mirror.style.left = '-9999px';
-    mirror.style.top = '0';
-    mirror.style.visibility = 'hidden';
-    mirror.style.border = '0';
-    mirror.style.boxSizing = 'border-box';
-    mirror.style.width = el.clientWidth + 'px';
-    mirror.style.whiteSpace = single ? 'pre' : 'pre-wrap';
-    mirror.style.overflowWrap = 'break-word';
-    mirror.textContent = el.value.substring(0, start);
+    mirror.style.cssText = `all:initial!important;display:block!important;position:fixed!important;left:-9999px!important;
+      top:0!important;visibility:hidden!important;box-sizing:border-box!important;width:${el.clientWidth}px!important;
+      white-space:${single ? 'pre' : 'pre-wrap'}!important;overflow-wrap:break-word!important;`;
+    for (const prop of MIRRORED) mirror.style.setProperty(prop, cs.getPropertyValue(prop), 'important');
+    const root = mirror.attachShadow({ mode: 'open' });
+    root.textContent = el.value.substring(0, start);
+    // The whole word, because it decides which line the shortcode wraps to.
     const marker = document.createElement('span');
-    marker.textContent = '​';
-    mirror.appendChild(marker);
+    marker.textContent = el.value.substring(start).match(/^\S*/)[0] || '\u200b';
+    root.appendChild(marker);
     document.documentElement.appendChild(mirror);
-    const from = mirror.getBoundingClientRect(), to = marker.getBoundingClientRect();
+    const from = mirror.getBoundingClientRect(), to = marker.getClientRects()[0];
     mirror.remove();
 
-    const x = box.left + el.clientLeft + (to.left - from.left) - el.scrollLeft;
+    // The box is on screen and the mirror is not, so a CSS transform on the field has to be applied by hand.
+    const scaleX = box.width / el.offsetWidth || 1, scaleY = box.height / el.offsetHeight || 1;
+    const x = box.left + scaleX * (el.clientLeft + (to.left - from.left) - el.scrollLeft);
     const clampedX = Math.max(box.left, Math.min(x, box.right));
     // A single-line field centers its text, so the field itself is the useful edge.
     if (single) return { x: clampedX, top: box.top, bottom: box.bottom };
-    const top = box.top + el.clientTop + (to.top - from.top) - el.scrollTop;
-    return { x: clampedX, top, bottom: top + to.height };
+    const top = box.top + scaleY * (el.clientTop + (to.top - from.top) - el.scrollTop);
+    return { x: clampedX, top, bottom: top + scaleY * to.height };
   }
 
   function measureAnchor(el, node, start, offset) {
@@ -324,13 +363,17 @@
   // On window, in capture, because that runs before any listener the page put on the field or document.
   window.addEventListener('keydown', (e) => {
     if (!open || e.isComposing || e.keyCode === 229) return;
+    // A list that lost its field, or that the page removed, must not keep answering keys nobody can see it for.
+    if (!dropdown.isConnected || !e.composedPath().includes(activeEl)) { hideDropdown(); return; }
+    // Cmd+A, Ctrl+Enter and the like are the page's. AltGr reports as Ctrl on Windows and still types characters.
+    if ((e.ctrlKey || e.metaKey) && !e.getModifierState('AltGraph')) { hideDropdown(); return; }
 
     const take = () => { e.preventDefault(); e.stopImmediatePropagation(); };
-    const plain = !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey);
+    const plain = !(e.shiftKey || e.altKey);
 
     if (CARET_KEYS.has(e.key)) hideDropdown();
     else if (e.key === 'Enter' || e.key === 'Tab') {
-      // Shift+Enter is a newline and Cmd+Enter is send. Neither is a pick.
+      // Shift+Enter is a newline, not a pick.
       if (plain) { take(); selectItem(selectedIndex); } else hideDropdown();
     }
     else if (e.key === 'ArrowDown') { take(); selectedIndex = (selectedIndex + 1) % matches.length; updateSelection(); }
@@ -341,6 +384,6 @@
   // --- Click outside ---
 
   window.addEventListener('mousedown', (e) => {
-    if (open && !dropdown.contains(e.target)) hideDropdown();
+    if (open && !e.composedPath().includes(dropdown)) hideDropdown();
   }, true);
 })();

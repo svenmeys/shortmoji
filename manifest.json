@@ -25,7 +25,6 @@
     {
       "matches": ["<all_urls>"],
       "js": ["emoji-data.js", "match.js", "content.js"],
-      "css": ["styles.css"],
       "run_at": "document_idle",
       "all_frames": true,
       "match_about_blank": true,

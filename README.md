@@ -71,7 +71,6 @@ shortmoji/
 ├── content.js         # Content script — input detection, dropdown, replacement
 ├── match.js           # Shortcode matching and search, no DOM
 ├── emoji-data.js      # Shortcode → emoji mapping (generated from gemoji)
-├── styles.css         # Dropdown styling
 ├── popup.html         # Extension popup (toggle on/off)
 ├── popup.js           # Popup logic
 └── docs/              # Reference documentation

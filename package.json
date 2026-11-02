@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "build": "bun run build:chrome && bun run build:firefox",
-    "build:chrome": "mkdir -p dist && zip -r dist/shortmoji-$npm_package_version-chrome.zip manifest.json content.js match.js emoji-data.js styles.css popup.html popup.js icon.svg icons/ -x '*.DS_Store'",
-    "build:firefox": "mkdir -p dist && zip -r dist/shortmoji-$npm_package_version-firefox.zip manifest.json content.js match.js emoji-data.js styles.css popup.html popup.js icon.svg icons/ -x '*.DS_Store'",
+    "build:chrome": "mkdir -p dist && rm -f dist/shortmoji-$npm_package_version-chrome.zip && zip -r dist/shortmoji-$npm_package_version-chrome.zip manifest.json content.js match.js emoji-data.js popup.html popup.js icon.svg icons/ -x '*.DS_Store'",
+    "build:firefox": "mkdir -p dist && rm -f dist/shortmoji-$npm_package_version-firefox.zip && zip -r dist/shortmoji-$npm_package_version-firefox.zip manifest.json content.js match.js emoji-data.js popup.html popup.js icon.svg icons/ -x '*.DS_Store'",
     "test": "bun test",
     "test:e2e": "python3 test/e2e.py"
   }

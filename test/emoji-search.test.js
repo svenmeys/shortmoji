@@ -170,8 +170,9 @@ describe('findTrigger', () => {
       for (const s of ['x[a:b:', 'foo:fire:', 'http://x.io:100:', 'std::x:']) expect(findTrigger(s)).toBeNull();
     });
 
-    test('issue numbers', () => {
+    test('issue numbers and capitalised hashtags', () => {
       expect(findTrigger('fixes #1234')).toBeNull();
+      expect(findTrigger('#Fire')).toBeNull();
     });
 
     test('closing colon without allowInstant', () => {
@@ -190,6 +191,11 @@ describe('findTrigger', () => {
       const long = 'x '.repeat(5000);
       expect(findTrigger(long + ':fire:').start).toBe(long.length);
       expect(findTrigger(long + ':roc').start).toBe(long.length);
+    });
+
+    test('uppercase after a colon', () => {
+      expect(findTrigger(':FIRE:').emoji).toBe('🔥');
+      expect(findTrigger(':Rocke').results[0].shortcode).toBe('rocket');
     });
 
     test('100 and +1', () => {

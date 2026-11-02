@@ -21,10 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Escape closed the dropdown only until the next character
 - The dropdown stayed behind after focus moved, the page scrolled, or the extension was turned off
 - An exact match could sit below longer ones: `:ok` listed `ok_hand` first
+- The dropdown rendered behind modal dialogs, popovers and fullscreen elements while still taking Enter
+- A site's own CSS could hide the dropdown or its contents, for example `.visible` or `.emoji`
+- Select-all then Enter corrupted the field
+- The dropdown was misplaced in RTL, right-aligned and CSS-scaled fields, and when a shortcode wrapped to the next line
+- Short iframes clipped the list to an unreadable sliver. It now stays closed there and the keys stay with the page
+- Clicking the edge or scrollbar of the list closed it
+- XHTML documents were ignored
 
 ### Added
 - Slate, CKEditor 5 and Trix now accept the replacement. They used to revert it
 - Editors inside open shadow roots and `about:blank`/`srcdoc` iframes, which covers TinyMCE
+- `:FIRE:` and `:Rocke` now match. `#Fire` stays a hashtag
 - Screen reader roles on the dropdown, and named, focusable switches in the popup
 - `test/e2e.py`: loads the real extension in a browser and types with real keys
 
@@ -32,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Typing in a long document no longer gets slower with its length, and the dropdown is measured once per shortcode
 - Emoji data is only built in a frame once someone starts a shortcode there
 - Unit tests now run the shipped code. They used to test a pasted copy
+- The dropdown lives in its own shadow root with inline styles, so `styles.css` is gone and no stylesheet is injected into every frame
+- Nothing of ours stays in the page while the dropdown is closed
 
 ## [1.1.1] - 2026-02-26
 

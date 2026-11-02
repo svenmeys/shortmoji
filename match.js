@@ -37,18 +37,20 @@ function searchEmojis(query) {
 function findTrigger(before, allowInstant = true) {
   const tail = before.slice(-TAIL);
 
-  const instant = allowInstant && tail.match(/:([a-z0-9_+\-]+):$/);
+  const instant = allowInstant && tail.match(/:([a-zA-Z0-9_+\-]+):$/);
   if (instant && canStartAt(tail, instant.index)) {
     const data = emojis();
     // hasOwn, because :constructor: is a property of every object.
-    if (Object.hasOwn(data, instant[1])) {
-      return { mode: 'instant', start: before.length - instant[0].length, emoji: data[instant[1]] };
+    const code = instant[1].toLowerCase();
+    if (Object.hasOwn(data, code)) {
+      return { mode: 'instant', start: before.length - instant[0].length, emoji: data[code] };
     }
   }
 
-  const trigger = tail.match(/[:#]([a-z0-9_+\-]{2,})$/);
+  const trigger = tail.match(/[:#]([a-zA-Z0-9_+\-]{2,})$/);
   if (!trigger || !canStartAt(tail, trigger.index)) return null;
-  if (trigger[0][0] === '#' && /^\d+$/.test(trigger[1])) return null; // #1234 is an issue number
+  // #1234 is an issue number and #Fire is a hashtag someone means.
+  if (trigger[0][0] === '#' && /^\d+$|[A-Z]/.test(trigger[1])) return null;
 
   const results = searchEmojis(trigger[1]);
   if (!results.length) return null;
